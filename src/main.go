@@ -85,12 +85,14 @@ func sendCommand(cmd string, conn *net.TCPConn) (err error) {
 	if len(cmd_slice) != 0 {
 		switch cmd_slice[0] {
 		// 只有空格导致越界
-		// 对于某些cmd需要添加后缀信息
+		// 对于某些cmd需要添加后缀信息或做些其他的事情
+		case "sendmsg":
+			fallthrough
 		case "whoami":
 			if login_flag {
 				appendix = " -id " + current_id
 			} else {
-				fmt.Println("just a guest.. wanna join?")
+				fmt.Println("Loooooogin required, wanna join?")
 				return errors.New("empty_send")
 			}
 		default: // 不需要添加的统统不写，进入default分支
