@@ -12,7 +12,13 @@ import (
 var login_flag = false
 var current_id string
 
+var debug bool = false
+
 func main() {
+	if debug {
+		login_flag = true
+		current_id = "debug"
+	}
 
 	conn := connectServer("127.0.0.1:5000")
 	defer conn.Close()
@@ -87,6 +93,8 @@ func sendCommand(cmd string, conn *net.TCPConn) (err error) {
 		// 只有空格导致越界
 		// 对于某些cmd需要添加后缀信息或做些其他的事情
 		case "sendmsg":
+			fallthrough
+		case "checkmsg":
 			fallthrough
 		case "whoami":
 			if login_flag {
