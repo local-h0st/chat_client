@@ -92,6 +92,10 @@ func sendCommand(cmd string, conn *net.TCPConn) (err error) {
 		switch cmd_slice[0] {
 		// 只有空格导致越界
 		// 对于某些cmd需要添加后缀信息或做些其他的事情
+		//case "logout":
+		//	fallthrough
+		case "startchat":
+			fallthrough
 		case "sendmsg":
 			fallthrough
 		case "checkmsg":
