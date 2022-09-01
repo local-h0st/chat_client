@@ -12,18 +12,13 @@ import (
 var login_flag = false
 var current_id string
 
-var debug bool = false
-
 func main() {
-	if debug {
-		login_flag = true
-		current_id = "debug"
-	}
 
 	conn := connectServer("127.0.0.1:5000")
 	defer conn.Close()
+	go listenServerThread(conn)
+	printPrompt(login_flag, current_id)
 	for true {
-		printPrompt(login_flag, current_id)
 		err := sendCommand(getInput(), conn)
 		if err != nil {
 			//if err.Error() == "empty_send" {
@@ -31,18 +26,8 @@ func main() {
 			//}
 			// 这里如果出现不是我定义的err应该会直接panic，因为可能没有Error()方法
 			// 算了直接一刀切全部continue就完了
+			printPrompt(login_flag, current_id)
 			continue
-		}
-
-		data_str, cmd_slice, cmd_check, err := recvData(conn)
-
-		if err != nil {
-			fmt.Print(err)
-		}
-		if cmd_check == false {
-			fmt.Println(data_str)
-		} else {
-			processCmd(cmd_slice)
 		}
 
 	}
@@ -78,41 +63,30 @@ func getInput() (input_str string) {
 }
 
 func sendCommand(cmd string, conn *net.TCPConn) (err error) {
-	// 需要作判断了，如果以及登录，那么send的指令应该带上 -id 参数
-	appendix := ""
-	// 复用server里面processCmdStrToSlice的代码
+
+	// 部分command需要登录后才可以使用
 	cmd_slice := make([]string, 0)
 	tmp := bufio.NewScanner(strings.NewReader(cmd))
 	tmp.Split(bufio.ScanWords)
 	for tmp.Scan() {
 		cmd_slice = append(cmd_slice, tmp.Text())
 	}
-
-	if len(cmd_slice) != 0 {
+	if len(cmd_slice) != 0 { // 只有空格导致越界
 		switch cmd_slice[0] {
-		// 只有空格导致越界
-		// 对于某些cmd需要添加后缀信息或做些其他的事情
-		//case "logout":
-		//	fallthrough
 		case "startchat":
 			fallthrough
 		case "sendmsg":
 			fallthrough
 		case "checkmsg":
-			fallthrough
-		case "whoami":
-			if login_flag {
-				appendix = " -id " + current_id
-			} else {
+			if login_flag == false {
 				fmt.Println("Loooooogin required, wanna join?")
 				return errors.New("empty_send")
 			}
-		default: // 不需要添加的统统不写，进入default分支
-			appendix = ""
+		default: // 不需要login统统不写，进入default分支
 		}
 	}
 
-	length, err := conn.Write([]byte(cmd + appendix))
+	length, err := conn.Write([]byte(cmd))
 	if err != nil {
 		return err
 	} else if length == 0 {
@@ -166,4 +140,21 @@ func processCmd(cmd []string) (err error) { // 服务端发过来的源头上就
 		fmt.Println("Server command not found")
 	}
 	return nil
+}
+
+func listenServerThread(conn net.Conn) {
+	for true {
+		data_str, cmd_slice, cmd_check, err := recvData(conn)
+
+		if err != nil {
+			fmt.Print(err)
+		}
+		if cmd_check == false {
+			fmt.Println(data_str)
+
+		} else {
+			processCmd(cmd_slice)
+		}
+		printPrompt(login_flag, current_id)
+	}
 }
