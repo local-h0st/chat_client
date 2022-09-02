@@ -2,37 +2,19 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
 )
 
-var login_flag = false
-var current_id string
-
-func main() {
-
-	conn := connectServer("127.0.0.1:5000")
-	defer conn.Close()
-	go listenServerThread(conn)
-	printPrompt(login_flag, current_id)
-	for true {
-		err := sendCommand(getInput(), conn)
-		if err != nil {
-			//if err.Error() == "empty_send" {
-			//	continue
-			//}
-			// 这里如果出现不是我定义的err应该会直接panic，因为可能没有Error()方法
-			// 算了直接一刀切全部continue就完了
-			printPrompt(login_flag, current_id)
-			continue
-		}
-
-	}
-
+type USER struct {
+	conn       *net.TCPConn
+	login_flag bool
+	current_id string
+	chat_mode  bool
 }
+
 func connectServer(remote_addr string) *net.TCPConn {
 	remote_tcpaddr, err := net.ResolveTCPAddr("tcp4", remote_addr)
 	if err != nil {
@@ -46,27 +28,66 @@ func connectServer(remote_addr string) *net.TCPConn {
 	}
 
 }
-
-func printPrompt(login_flag bool, id string) {
-	if login_flag {
-		fmt.Print("@[" + id + "]>>> ")
-	} else {
-		fmt.Print("@[?]>>> ")
-	}
-}
-
 func getInput() (input_str string) {
 	input := bufio.NewScanner(os.Stdin)
 	input.Scan()
 	input_str = input.Text()
-	return
+	return input_str
+}
+func keepRecvDataAndProcess(user *USER) {
+	for true {
+		buff_size := 128
+		var data_buff []byte
+		for true { // 缓冲区
+			buff := make([]byte, buff_size)
+			length, err := user.conn.Read(buff)
+			if err != nil {
+				panic(err)
+			}
+			for _, v := range buff {
+				if v != 0 {
+					data_buff = append(data_buff, v)
+				}
+			}
+			if length < buff_size {
+				break
+			}
+		}
+		data_str := string(data_buff)
+		// 字符串收到
+		cmd_slice := make([]string, 0)
+		command := bufio.NewScanner(strings.NewReader(data_str))
+		command.Split(bufio.ScanWords)
+		for command.Scan() {
+			cmd_slice = append(cmd_slice, command.Text())
+		}
+		if cmd_slice[0] == "[#clientmov#]" { // 是来自server的command
+			cmd_slice = cmd_slice[1:]
+			processCmd(cmd_slice, user)
+		} else { // 不是command，直接输出
+			fmt.Print(data_str)
+		}
+	}
 }
 
-func sendCommand(cmd string, conn *net.TCPConn) (err error) {
+var user USER
 
+func main() {
+	user.conn = connectServer("127.0.0.1:5000")
+	defer user.conn.Close()
+	go keepRecvDataAndProcess(&user)
+	sendCommand("sendprompt", &user) // 获取第一个提示符
+	for true {
+		input_data := getInput()
+		sendCommand(input_data, &user)
+	}
+
+}
+
+func sendCommand(data_str string, user *USER) {
 	// 部分command需要登录后才可以使用
 	cmd_slice := make([]string, 0)
-	tmp := bufio.NewScanner(strings.NewReader(cmd))
+	tmp := bufio.NewScanner(strings.NewReader(data_str))
 	tmp.Split(bufio.ScanWords)
 	for tmp.Scan() {
 		cmd_slice = append(cmd_slice, tmp.Text())
@@ -78,83 +99,38 @@ func sendCommand(cmd string, conn *net.TCPConn) (err error) {
 		case "sendmsg":
 			fallthrough
 		case "checkmsg":
-			if login_flag == false {
+			if user.login_flag == false {
 				fmt.Println("Loooooogin required, wanna join?")
-				return errors.New("empty_send")
+				user.conn.Write([]byte("sendprompt"))
+			} else {
+				user.conn.Write([]byte(data_str))
 			}
 		default: // 不需要login统统不写，进入default分支
+			user.conn.Write([]byte(data_str))
+		}
+	} else {
+		if user.chat_mode == false {
+			user.conn.Write([]byte("sendprompt"))
+		} else {
+
 		}
 	}
 
-	length, err := conn.Write([]byte(cmd))
-	if err != nil {
-		return err
-	} else if length == 0 {
-		return errors.New("empty_send")
-	} else {
-		return nil
-	}
 }
 
-func recvData(conn net.Conn) (data string, may_cmd_slice []string, command bool, err error) { // 我直接复用getCmdString
-	buff_size := 128
-	var data_buff []byte
-	for true { // 缓冲区
-		buff := make([]byte, buff_size)
-		length, err := conn.Read(buff)
-		if err != nil {
-			return "", nil, false, err
-		}
-		for _, v := range buff {
-			if v != 0 {
-				data_buff = append(data_buff, v)
-			}
-		}
-		if length < buff_size {
-			break
-		}
-	}
-	data = string(data_buff)
-	// 复用server里面processCmdStrToSlice的代码
-	may_cmd := bufio.NewScanner(strings.NewReader(data))
-	may_cmd.Split(bufio.ScanWords)
-	may_cmd_slice = make([]string, 0)
-	for may_cmd.Scan() {
-		may_cmd_slice = append(may_cmd_slice, may_cmd.Text())
-	}
-	if may_cmd_slice[0] == "[#clientmov#]" {
-		command = true
-	} else {
-		command = false
-	}
-
-	return data, may_cmd_slice[1:], command, nil
-}
-
-func processCmd(cmd []string) (err error) { // 服务端发过来的源头上就不会有问题，因此不做检查
+func processCmd(cmd []string, user *USER) { // 服务端发过来的源头上就不会有问题，因此不做检查
 	switch cmd[0] {
 	case "login_success":
-		login_flag = true
-		current_id = cmd[2]
+		user.login_flag = true
+		user.current_id = cmd[2]
+	case "send_noresponse":
+		user.conn.Write([]byte("noresponse"))
+	case "switch_to_chat_mode": // 由于之前是卡在getinput里面的，因此这里修改完之后，getinput收到回车才会送到send函数里面去，这时候chat_mode已经是true了
+		user.chat_mode = true
+		fmt.Println(user.current_id, "switched")
+	case "switch_off_chat_mode":
+		user.chat_mode = false
 	default:
-		fmt.Println("Server command not found")
-	}
-	return nil
-}
-
-func listenServerThread(conn net.Conn) {
-	for true {
-		data_str, cmd_slice, cmd_check, err := recvData(conn)
-
-		if err != nil {
-			fmt.Print(err)
-		}
-		if cmd_check == false {
-			fmt.Println(data_str)
-
-		} else {
-			processCmd(cmd_slice)
-		}
-		printPrompt(login_flag, current_id)
+		fmt.Println("Server command not found: ", cmd[0])
 	}
 }
